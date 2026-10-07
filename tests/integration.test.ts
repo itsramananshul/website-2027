@@ -305,6 +305,59 @@ test("resume upload, replacement, download, and removal with isolated storage tr
   process.env.SUPABASE_URL = `http://127.0.0.1:${address.port}`;
   process.env.SUPABASE_SECRET_KEY = "local-test-only-storage-key";
   try {
+    const signupRequestId = randomUUID();
+    const signupResume = new File(["%PDF-1.7\nresume attached during signup"], "signup.pdf", {
+      type: "application/pdf",
+    });
+    await createSubmission(
+      { kind: "hacker", answers: hacker("signup-resume@example.com"), requestId: signupRequestId },
+      "signup-resume-ip",
+      signupResume,
+    );
+    const signup = (
+      await getPool().query(
+        "SELECT id,resume_path,email_verified_at FROM form_submissions WHERE email='signup-resume@example.com'",
+      )
+    ).rows[0];
+    assert.ok(signup.resume_path);
+    assert.equal(signup.email_verified_at, null);
+    const uploadedCount = requests.length;
+    await createSubmission(
+      { kind: "hacker", answers: hacker("signup-resume@example.com"), requestId: signupRequestId },
+      "signup-resume-ip",
+      signupResume,
+    );
+    assert.equal(
+      requests.length,
+      uploadedCount,
+      "duplicate signup must not upload or replace a resume",
+    );
+    assert.equal(
+      (await getPool().query("SELECT resume_path FROM form_submissions WHERE id=$1", [signup.id]))
+        .rows[0].resume_path,
+      signup.resume_path,
+    );
+    await assert.rejects(
+      () =>
+        createSubmission(
+          {
+            kind: "hacker",
+            answers: hacker("invalid-resume@example.com"),
+            requestId: randomUUID(),
+          },
+          "invalid-resume-ip",
+          new File(["not a PDF"], "disguised.pdf", { type: "application/pdf" }),
+        ),
+      (error: unknown) => error instanceof FormError && Boolean(error.fields.resume),
+    );
+    assert.equal(
+      (
+        await getPool().query(
+          "SELECT count(*) FROM form_submissions WHERE email='invalid-resume@example.com'",
+        )
+      ).rows[0].count,
+      "0",
+    );
     const a = await apply("resume-test@example.com");
     await updateOwner(a.token, "verify");
     const pdf = new File(["%PDF-1.7\nlocal test resume"], "resume.pdf", {

@@ -53,7 +53,7 @@ export function useIntakeForm(kind: FormKind) {
     setDirty(true);
     setErrors((prev) => ({ ...prev, [name]: undefined }));
   }
-  async function submit(input: Answers) {
+  async function submit(input: Answers, resume?: File) {
     if (busy.current) return false;
     setErrors({});
     let answers: Answers;
@@ -74,15 +74,22 @@ export function useIntakeForm(kind: FormKind) {
     busy.current = true;
     setIsSubmitting(true);
     try {
+      const payload = JSON.stringify({
+        kind,
+        answers,
+        requestId: requestId.current,
+        website: input._trap ?? "",
+      });
+      let body: string | FormData = payload;
+      if (resume) {
+        body = new FormData();
+        body.set("submission", payload);
+        body.set("resume", resume);
+      }
       const response = await fetch("/api/intake", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind,
-          answers,
-          requestId: requestId.current,
-          website: input._trap ?? "",
-        }),
+        headers: resume ? undefined : { "Content-Type": "application/json" },
+        body,
       });
       const result = await response.json();
       if (!response.ok) {

@@ -12,6 +12,7 @@ import {
 export default function RegisterPage() {
   const form = useIntakeForm("hacker");
   const [submitted, setSubmitted] = useState(false);
+  const [resume, setResume] = useState<File>();
   const [settingsFailed, setSettingsFailed] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => setSettingsFailed(true), 10000);
@@ -70,7 +71,7 @@ export default function RegisterPage() {
           onChange={form.touch}
           onSubmit={async (event) => {
             event.preventDefault();
-            if (await form.submit(form.extras)) setSubmitted(true);
+            if (await form.submit(form.extras, resume)) setSubmitted(true);
           }}
           className="flex flex-col gap-6"
         >
@@ -82,6 +83,38 @@ export default function RegisterPage() {
             errors={form.errors}
             settings={form.settings}
           />
+          <section className="rounded-md border p-4 text-gray-900" aria-labelledby="resume-heading">
+            <h2 id="resume-heading" className="font-semibold">
+              Optional resume
+            </h2>
+            <p id="resume-help" className="mt-2 text-sm text-gray-600">
+              Upload a PDF up to 4 MB. Your resume stays private. Sponsors can only see it if you
+              choose resume sharing and verify your email. You can replace or remove it later.
+            </p>
+            <label htmlFor="resume" className="mt-4 block font-medium">
+              Choose a PDF resume
+            </label>
+            <input
+              id="resume"
+              name="resume"
+              type="file"
+              accept=".pdf,application/pdf"
+              aria-describedby={form.errors.resume ? "resume-help resume-error" : "resume-help"}
+              aria-invalid={Boolean(form.errors.resume)}
+              className="mt-2 block w-full min-h-11 rounded-md border p-2 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#228CF6]"
+              onChange={(event) => {
+                const selected = event.target.files?.[0];
+                setResume(selected);
+                form.setErrors((previous) => ({ ...previous, resume: undefined }));
+                form.touch();
+              }}
+            />
+            {form.errors.resume && (
+              <p id="resume-error" className="mt-2 text-sm text-red-700">
+                {form.errors.resume}
+              </p>
+            )}
+          </section>
           <FormPrivacy settings={form.settings} />
           <SubmitButton pending={form.isSubmitting} label="Register" />
         </form>

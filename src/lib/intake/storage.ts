@@ -21,6 +21,32 @@ export function validateResume(name: string, type: string, bytes: Uint8Array) {
   )
     throw new FormError({}, 400, "Please upload a PDF resume.");
 }
+// Initial submissions may attach a resume before email verification. This helper
+// is called only for a newly inserted hacker, never for a duplicate or owner edit.
+export async function storeSignupResume(eventId: string, submissionId: string, file: File) {
+  if (file.size > MAX_RESUME_BYTES)
+    throw new FormError({ resume: "Please upload a PDF of up to 4 MB." }, 413);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try {
+    validateResume(file.name, file.type, bytes);
+  } catch (error) {
+    if (error instanceof FormError) throw new FormError({ resume: error.message }, error.status);
+    throw error;
+  }
+  const path = `${eventId}/${submissionId}/${randomUUID()}.pdf`;
+  const result = await storageClient().storage.from(RESUME_BUCKET).upload(path, bytes, {
+    contentType: "application/pdf",
+    upsert: false,
+    cacheControl: "0",
+  });
+  if (result.error)
+    throw new FormError({ resume: "We couldn't upload your resume. Please try again." }, 503);
+  return path;
+}
+export async function discardSignupResume(path: string) {
+  const result = await storageClient().storage.from(RESUME_BUCKET).remove([path]);
+  if (result.error) throw new Error("Initial resume cleanup failed.");
+}
 async function resumeOwner(token: string, uploading = false) {
   return transaction(async (client) => {
     const s = await findOwner(client, token);

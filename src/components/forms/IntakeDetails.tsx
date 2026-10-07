@@ -84,10 +84,6 @@ export function IntakeDetails({
                 onChange={onChange}
                 errors={errors}
               />
-              <p className="text-sm text-gray-600">
-                You can upload an optional PDF resume after verifying your email. Sponsor sharing is
-                optional.
-              </p>
             </div>
           </details>
           <details className="rounded-md border p-4">

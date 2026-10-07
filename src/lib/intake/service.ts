@@ -110,10 +110,12 @@ export async function saveConsents(
     ],
   );
 }
-export async function createSubmission(raw: unknown, ip: string) {
+export async function createSubmission(raw: unknown, ip: string, resume?: File) {
   const parsed = submissionEnvelope.safeParse(raw);
   if (!parsed.success) throw new FormError({}, 400, "Invalid form submission.");
   if (parsed.data.website) return { saved: true, notification: "queued" };
+  if (resume && parsed.data.kind !== "hacker")
+    throw new FormError({ resume: "Resumes can only be attached to hacker registrations." });
   const settings = await getEvent();
   if (parsed.data.kind === "hacker" && !settings.registrationOpen)
     throw new FormError(
@@ -122,40 +124,61 @@ export async function createSubmission(raw: unknown, ip: string) {
       "Registration is not open yet. You can join the interest list instead.",
     );
   validateAnswers(parsed.data.kind, parsed.data.answers, settings);
-  return transaction(async (client) => {
-    const currentSettings = await getEvent(client, true);
-    if (parsed.data.kind === "hacker" && !currentSettings.registrationOpen)
-      throw new FormError(
-        {},
-        409,
-        "Registration is not open yet. You can join the interest list instead.",
-      );
-    const answers = validateAnswers(parsed.data.kind, parsed.data.answers, currentSettings);
-    await rateLimit(client, "submit-ip", ip, 30);
-    await rateLimit(client, "submit-email", String(answers.email), 5);
-    const result = await client.query(
-      `INSERT INTO form_submissions (event_id,kind,email,request_id,data,status)
+  let uploadedPath: string | undefined;
+  try {
+    return await transaction(async (client) => {
+      const currentSettings = await getEvent(client, true);
+      if (parsed.data.kind === "hacker" && !currentSettings.registrationOpen)
+        throw new FormError(
+          {},
+          409,
+          "Registration is not open yet. You can join the interest list instead.",
+        );
+      const answers = validateAnswers(parsed.data.kind, parsed.data.answers, currentSettings);
+      await rateLimit(client, "submit-ip", ip, 30);
+      await rateLimit(client, "submit-email", String(answers.email), 5);
+      const result = await client.query(
+        `INSERT INTO form_submissions (event_id,kind,email,request_id,data,status)
       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id`,
-      [
-        EVENT_ID,
-        parsed.data.kind,
-        answers.email,
-        parsed.data.requestId,
-        JSON.stringify(answers),
-        parsed.data.kind === "interest" ? "INTEREST" : "RECEIVED",
-      ],
-    );
-    // Never overwrite an existing applicant or reveal whether an email is registered.
-    if (result.rows.length) {
-      const id = result.rows[0].id;
-      await saveConsents(client, id, answers, currentSettings);
-      const link = await issueManagementLink(client, id);
-      await queueEmail(client, id, "receipt", { link });
-      if (parsed.data.kind !== "interest" && parsed.data.kind !== "hacker")
-        await queueEmail(client, id, "organizer", {});
+        [
+          EVENT_ID,
+          parsed.data.kind,
+          answers.email,
+          parsed.data.requestId,
+          JSON.stringify(answers),
+          parsed.data.kind === "interest" ? "INTEREST" : "RECEIVED",
+        ],
+      );
+      // Never overwrite an existing applicant or reveal whether an email is registered.
+      if (result.rows.length) {
+        const id = result.rows[0].id;
+        if (resume) {
+          const { storeSignupResume } = await import("./storage");
+          uploadedPath = await storeSignupResume(EVENT_ID, id, resume);
+          await client.query("UPDATE form_submissions SET resume_path=$1 WHERE id=$2", [
+            uploadedPath,
+            id,
+          ]);
+        }
+        await saveConsents(client, id, answers, currentSettings);
+        const link = await issueManagementLink(client, id);
+        await queueEmail(client, id, "receipt", { link });
+        if (parsed.data.kind !== "interest" && parsed.data.kind !== "hacker")
+          await queueEmail(client, id, "organizer", {});
+      }
+      return { saved: true, notification: "queued" };
+    });
+  } catch (error) {
+    if (uploadedPath) {
+      const { discardSignupResume } = await import("./storage");
+      try {
+        await discardSignupResume(uploadedPath);
+      } catch {
+        console.error("Initial resume cleanup needs retry", uploadedPath);
+      }
     }
-    return { saved: true, notification: "queued" };
-  });
+    throw error;
+  }
 }
 export async function findOwner(
   client: PoolClient,
