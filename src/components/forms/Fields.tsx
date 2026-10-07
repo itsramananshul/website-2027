@@ -1,7 +1,7 @@
 "use client";
 import { InputField } from "@/components/ui/InputField";
 import { COC_URL } from "@/lib/intake/consents";
-import { isVisible, type Field, type Answers, type EventSettings } from "@/lib/intake/definitions";
+import { isVisible, type Field, type Answers } from "@/lib/intake/definitions";
 export const CONTROL_CLASS =
   "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#228CF6]";
 export function Fields({
@@ -164,102 +164,23 @@ export function Fields({
     });
 }
 export function AvailabilityFields({
-  settings,
-  kind,
   answers,
   onChange,
   errors,
 }: {
-  settings?: EventSettings;
-  kind: string;
+  kind?: string;
   answers: Answers;
   onChange: (key: string, value: Answers[string]) => void;
   errors?: Record<string, string | undefined>;
 }) {
-  const slots =
-    settings?.slots.filter(
-      (slot) =>
-        slot.roles.includes(kind) ||
-        (kind === "judge-mentor" &&
-          Array.isArray(answers.roles) &&
-          answers.roles.some((role) => slot.roles.includes(role))),
-    ) ?? [];
-  const required = kind !== "judge-mentor" || answers.availability === "Yes";
-  const fields: Field[] = slots.length
-    ? [
-        {
-          name: "availabilitySlots",
-          label: `Available sessions or shifts (${settings?.timezone})`,
-          type: "multi",
-          required: true,
-          options: slots.map((s) => s.id),
-        },
-      ]
-    : [];
-  const labels = new Map(slots.map((s) => [s.id, s.label]));
   return (
-    <div className="flex flex-col gap-5">
-      {slots.length > 0 && (
-        <fieldset
-          id="availabilitySlots"
-          tabIndex={-1}
-          aria-invalid={Boolean(errors?.availabilitySlots)}
-          aria-describedby={errors?.availabilitySlots ? "availabilitySlots-error" : undefined}
-        >
-          <legend className="font-semibold text-gray-900">
-            {fields[0].label}
-            {required && " *"}
-          </legend>
-          {slots.map((slot) => (
-            <label key={slot.id} className="mt-2 flex min-h-6 gap-3 text-gray-900">
-              <input
-                type="checkbox"
-                name="availabilitySlots"
-                value={slot.id}
-                checked={
-                  Array.isArray(answers.availabilitySlots) &&
-                  answers.availabilitySlots.includes(slot.id)
-                }
-                onChange={(e) => {
-                  const previous = Array.isArray(answers.availabilitySlots)
-                    ? answers.availabilitySlots
-                    : [];
-                  onChange(
-                    "availabilitySlots",
-                    e.target.checked
-                      ? [...previous, slot.id]
-                      : previous.filter((v) => v !== slot.id),
-                  );
-                }}
-              />
-              {labels.get(slot.id)}
-            </label>
-          ))}
-          {errors?.availabilitySlots && (
-            <p id="availabilitySlots-error" className="text-red-600">
-              {errors.availabilitySlots}
-            </p>
-          )}
-        </fieldset>
-      )}
-      {!slots.length && (
-        <p className="text-sm text-gray-600">
-          The session schedule is still being arranged. We will ask you to confirm a specific time
-          once it is available.
-        </p>
-      )}
-      <Fields
-        fields={[
-          {
-            name: "availabilityNotes",
-            label: "Availability or scheduling notes",
-            type: "textarea",
-          },
-        ]}
-        answers={answers}
-        onChange={onChange}
-        errors={errors}
-      />
-    </div>
+    <Fields
+      fields={[
+        { name: "availabilityNotes", label: "Availability or scheduling notes", type: "textarea" },
+      ]}
+      answers={answers}
+      onChange={onChange}
+      errors={errors}
+    />
   );
 }

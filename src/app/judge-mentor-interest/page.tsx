@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { InputField } from "@/components/ui/InputField";
-import Link from "next/link";
 import { Fields, AvailabilityFields } from "@/components/forms/Fields";
 import {
   useIntakeForm,
@@ -59,8 +58,16 @@ export default function JudgeMentorInterestPage() {
   const [specialRequirements, setSpecialRequirements] = useState("");
   const [expectations, setExpectations] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
-  const { errors, setErrors, isSubmitting, submit, settings, extras, changeExtra, touch } =
-    useIntakeForm("judge-mentor");
+  const {
+    errors,
+    setErrors,
+    isSubmitting,
+    submit,
+    notificationWarning,
+    extras,
+    changeExtra,
+    touch,
+  } = useIntakeForm("judge-mentor");
 
   function handleNameChange(val: string) {
     setFullName(val);
@@ -160,12 +167,11 @@ export default function JudgeMentorInterestPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
               </div>
-              <p role="status" className="text-sm text-gray-600">
-                Your response is saved. We have queued your confirmation email.
-              </p>
-              <Link href="/registration" className="text-[#228CF6] underline">
-                Review your details or request a new email link
-              </Link>
+              {notificationWarning && (
+                <p role="status" className="text-sm text-gray-600">
+                  {notificationWarning}
+                </p>
+              )}
               <h2 className="text-2xl font-bold text-[#151477]">Thank you!</h2>
               <p className="text-[#151477]/70">
                 We&apos;ve received your interest. Our team will reach out soon.
@@ -494,12 +500,11 @@ export default function JudgeMentorInterestPage() {
               />
               <AvailabilityFields
                 kind="judge-mentor"
-                settings={settings}
                 answers={{ ...extras, roles }}
                 onChange={changeExtra}
                 errors={errors}
               />
-              <FormPrivacy settings={settings} />
+              <FormPrivacy />
               <SubmitButton pending={isSubmitting} />
             </form>
           )}

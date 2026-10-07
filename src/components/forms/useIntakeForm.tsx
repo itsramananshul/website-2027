@@ -2,31 +2,21 @@
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { validateAnswers, FormError } from "@/lib/intake/validation";
-import type { Answers, EventSettings, FormKind } from "@/lib/intake/definitions";
+import { saveForm } from "@/lib/intake/submission";
+import { supabase } from "@/lib/supabase";
+import type { Answers, FormKind } from "@/lib/intake/definitions";
 export function useIntakeForm(kind: FormKind) {
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [settings, setSettings] = useState<EventSettings>();
+  const [notificationWarning, setNotificationWarning] = useState("");
   const [extras, setExtras] = useState<Answers>({});
   const [dirty, setDirty] = useState(false);
   const busy = useRef(false);
-  const requestId = useRef<string | undefined>(undefined);
-  const previous = useRef("");
   const focusErrors = useRef(false);
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/intake/settings", { signal: controller.signal })
-      .then(async (response) => {
-        if (response.ok) setSettings(await response.json());
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const upload = useRef<{ file: File; path: string; receipt: string } | undefined>(undefined);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (dirty) {
-        event.preventDefault();
-      }
+      if (dirty) event.preventDefault();
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
@@ -53,12 +43,25 @@ export function useIntakeForm(kind: FormKind) {
     setDirty(true);
     setErrors((prev) => ({ ...prev, [name]: undefined }));
   }
+  async function discardUpload() {
+    if (!upload.current) return;
+    try {
+      const response = await fetch("/api/resume-upload", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receipt: upload.current.receipt }),
+      });
+      if (response.ok) upload.current = undefined;
+    } catch {
+      /* Keep the receipt and reuse this upload on a retry. */
+    }
+  }
   async function submit(input: Answers, resume?: File) {
     if (busy.current) return false;
     setErrors({});
     let answers: Answers;
     try {
-      answers = validateAnswers(kind, input, settings);
+      answers = validateAnswers(kind, input);
     } catch (error) {
       if (error instanceof FormError) {
         focusErrors.current = true;
@@ -66,43 +69,43 @@ export function useIntakeForm(kind: FormKind) {
       }
       return false;
     }
-    const serialized = JSON.stringify(answers);
-    if (previous.current !== serialized || !requestId.current) {
-      requestId.current = crypto.randomUUID();
-      previous.current = serialized;
-    }
     busy.current = true;
     setIsSubmitting(true);
     try {
-      const payload = JSON.stringify({
+      if (upload.current && upload.current.file !== resume) await discardUpload();
+      if (resume && upload.current?.file !== resume) {
+        if (resume.size > 4 * 1024 * 1024)
+          throw new FormError({ resume: "Please upload a PDF of up to 4 MB." });
+        const body = new FormData();
+        body.set("resume", resume);
+        const response = await fetch("/api/resume-upload", { method: "POST", body });
+        const result = await response.json();
+        if (!response.ok)
+          throw new FormError(
+            result.fields ?? { resume: "We couldn't upload your resume. Please try again." },
+            response.status,
+            result.error,
+          );
+        upload.current = { file: resume, path: result.path, receipt: result.receipt };
+      }
+      const result = await saveForm(
+        supabase,
         kind,
         answers,
-        requestId: requestId.current,
-        website: input._trap ?? "",
-      });
-      let body: string | FormData = payload;
-      if (resume) {
-        body = new FormData();
-        body.set("submission", payload);
-        body.set("resume", resume);
-      }
-      const response = await fetch("/api/intake", {
-        method: "POST",
-        headers: resume ? undefined : { "Content-Type": "application/json" },
-        body,
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        focusErrors.current = true;
-        setErrors({ ...result.fields, _form: result.error ?? "Please try again." });
-        return false;
-      }
+        resume ? upload.current?.path : undefined,
+      );
+      setNotificationWarning(result.notificationWarning);
       setDirty(false);
+      upload.current = undefined;
       return true;
-    } catch {
-      setErrors({
-        _form: "We couldn't save your form. Your answers are still here. Please try again.",
-      });
+    } catch (error) {
+      await discardUpload();
+      focusErrors.current = true;
+      setErrors(
+        error instanceof FormError
+          ? { ...error.fields, _form: error.message }
+          : { _form: "We couldn't save your form. Your answers are still here. Please try again." },
+      );
       return false;
     } finally {
       busy.current = false;
@@ -114,7 +117,7 @@ export function useIntakeForm(kind: FormKind) {
     setErrors,
     isSubmitting,
     submit,
-    settings,
+    notificationWarning,
     extras,
     changeExtra,
     touch: () => setDirty(true),
@@ -153,12 +156,11 @@ export function SubmitButton({ pending, label = "Submit" }: { pending: boolean; 
     </button>
   );
 }
-export function FormPrivacy({ settings }: { settings?: EventSettings }) {
+export function FormPrivacy() {
   return (
     <p className="text-sm text-gray-600">
-      {settings?.details.privacyNotice ??
-        "We use your answers to organize RevolutionUC and contact you about your application. Contact info@revolutionuc.com with questions about your information."}
-      {settings?.details.retentionNotice && ` ${settings.details.retentionNotice}`}
+      We use your answers to organize RevolutionUC and follow up on your interest. Contact
+      info@revolutionuc.com with questions about your information.
     </p>
   );
 }

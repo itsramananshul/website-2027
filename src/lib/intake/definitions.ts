@@ -1,13 +1,4 @@
-export const EVENT_ID = "revuc-2027";
-export const FORM_KINDS = [
-  "interest",
-  "hacker",
-  "judge-mentor",
-  "sponsor",
-  "volunteer",
-  "speaker",
-  "sponsor-representative",
-] as const;
+export const FORM_KINDS = ["hacker", "judge-mentor", "sponsor"] as const;
 export type FormKind = (typeof FORM_KINDS)[number];
 export type Answers = Record<string, string | number | boolean | string[]>;
 export type Field = {
@@ -228,29 +219,25 @@ export const judgeExtraFields: Field[] = [
     name: "conflicts",
     label: "Conflicts of interest",
     type: "textarea",
-    required: true,
     help: "List teams, close relationships, or affiliations that could affect judging. Enter None if you have no known conflicts.",
     when: { field: "roles", value: "Judge" },
   },
-  { name: "shiftContact", label: "Preferred contact method during your shift", required: true },
+  { name: "shiftContact", label: "Preferred contact method during your shift" },
   {
     name: "orientation",
     label: "I can attend the organizer briefing for my role.",
     type: "checkbox",
-    required: true,
   },
   {
     name: "confidentiality",
     label:
       "I will keep private submissions confidential and disclose conflicts before reviewing a team.",
     type: "checkbox",
-    required: true,
   },
   {
     name: "coc",
     label: "I have read and agree to the event Code of Conduct.",
     type: "checkbox",
-    required: true,
   },
 ];
 export const sponsorExtraFields: Field[] = [
@@ -288,148 +275,6 @@ export const sponsorExtraFields: Field[] = [
   },
   OTHER_FIELD("otherContribution", "Other contribution", "contributions"),
 ];
-export const sponsorOnboardingFields: Field[] = [
-  { name: "logoUrl", label: "Logo file link", type: "url" },
-  { name: "brandInstructions", label: "Logo usage instructions", type: "textarea" },
-  { name: "sponsorBlurb", label: "Website blurb", type: "textarea" },
-  {
-    name: "billingContact",
-    label: "Invoice or PO contact",
-    help: "Contact details only. Do not enter bank or payment-card details.",
-  },
-  {
-    name: "representativeDetails",
-    label: "On-site representatives and contact details",
-    type: "textarea",
-  },
-  { name: "boothNeeds", label: "Booth space, power, and network needs", type: "textarea" },
-  {
-    name: "workshopDetails",
-    label: "Workshop title, audience, duration, availability, and equipment",
-    type: "textarea",
-  },
-  {
-    name: "prizeDetails",
-    label: "Prize or challenge criteria, eligibility, judges, and deliverables",
-    type: "textarea",
-  },
-  {
-    name: "coc",
-    label: "I have read and agree to the event Code of Conduct.",
-    type: "checkbox",
-    required: true,
-  },
-];
-export const volunteerFields: Field[] = [
-  ...contactFields,
-  {
-    name: "duties",
-    label: "Preferred duties",
-    type: "multi",
-    required: true,
-    options: [
-      "Check-in",
-      "Meals",
-      "Room support",
-      "Technical support",
-      "Workshop assistance",
-      "Setup",
-      "Cleanup",
-      "No preference",
-    ],
-  },
-  { name: "skills", label: "Useful skills", type: "textarea" },
-  { name: "experience", label: "Previous volunteer experience", type: "textarea" },
-  {
-    name: "orientation",
-    label: "I can attend the volunteer briefing.",
-    type: "checkbox",
-    required: true,
-  },
-  {
-    name: "coc",
-    label: "I have read and agree to the event Code of Conduct.",
-    type: "checkbox",
-    required: true,
-  },
-];
-export const speakerFields: Field[] = [
-  ...contactFields,
-  { name: "organization", label: "Affiliation", help: "Independent is fine." },
-  { name: "title", label: "Talk or workshop title", required: true },
-  { name: "abstract", label: "Short description", type: "textarea", required: true },
-  {
-    name: "audience",
-    label: "Audience level",
-    type: "select",
-    required: true,
-    options: ["Beginner", "Intermediate", "Advanced", "All levels"],
-  },
-  { name: "duration", label: "Duration in minutes", type: "number", required: true },
-  { name: "equipment", label: "Equipment needs", type: "textarea" },
-  { name: "bio", label: "Short bio or profile link", type: "textarea" },
-  {
-    name: "recordingConsent",
-    label: "I agree to recording and publication of my session.",
-    type: "checkbox",
-  },
-  {
-    name: "profileConsent",
-    label: "I agree to publication of my speaker profile.",
-    type: "checkbox",
-  },
-  {
-    name: "coc",
-    label: "I have read and agree to the event Code of Conduct.",
-    type: "checkbox",
-    required: true,
-  },
-];
-export const representativeFields: Field[] = [
-  ...contactFields,
-  { name: "organization", label: "Sponsor company", required: true },
-  { name: "contactRole", label: "Your role" },
-  {
-    name: "coc",
-    label: "I have read and agree to the event Code of Conduct.",
-    type: "checkbox",
-    required: true,
-  },
-  {
-    name: "resumeUseAgreement",
-    label:
-      "I will use opted-in resumes only for recruiting for my sponsoring company, keep them private, and follow RevUC's sharing instructions.",
-    type: "checkbox",
-    required: true,
-  },
-];
-export type AvailabilitySlot = { id: string; label: string; roles: string[] };
-export type EventSettings = {
-  id: string;
-  year: number;
-  registrationOpen: boolean;
-  capacity: number | null;
-  startsAt: string | null;
-  endsAt: string | null;
-  confirmationDeadline: string | null;
-  timezone: string;
-  slots: AvailabilitySlot[];
-  details: {
-    mlhPartnerConfirmed?: boolean;
-    accessibilityContact?: string;
-    waiverUrl?: string;
-    mediaNotice?: string;
-    emergencyContact?: boolean;
-    travelQuestions?: boolean;
-    expensePolicy?: string;
-    privacyNotice?: string;
-    retentionNotice?: string;
-    shirtSizes?: string[];
-    projectSubmissionOpen?: boolean;
-    maxTeamSize?: number;
-    projectRules?: string;
-  };
-};
 export function isVisible(field: Field, answers: Answers) {
   if (!field.when) return true;
   const value = answers[field.when.field];

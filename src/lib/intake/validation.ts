@@ -2,7 +2,6 @@ import { parsePhoneNumberFromString } from "libphonenumber-js/core";
 import phoneMetadata from "libphonenumber-js/metadata.max.json";
 import { z } from "zod";
 import {
-  FORM_KINDS,
   STUDY_LEVELS,
   EXPERTISE_AREAS,
   SPONSOR_GOALS,
@@ -13,27 +12,15 @@ import {
   hackerOptionalFields,
   judgeExtraFields,
   sponsorExtraFields,
-  sponsorOnboardingFields,
-  volunteerFields,
-  speakerFields,
-  representativeFields,
   OTHER_FIELD,
   isVisible,
   type Answers,
   type Field,
   type FormKind,
-  type EventSettings,
 } from "./definitions";
 import { COUNTRIES } from "@/app/interest/countries";
 const name = (key: string, label: string): Field => ({ name: key, label, required: true });
 export const fieldsByKind: Record<FormKind, Field[]> = {
-  interest: [
-    name("firstName", "First name"),
-    name("lastName", "Last name"),
-    { name: "email", label: "Email", type: "email", required: true },
-    { name: "school", label: "School" },
-    { name: "referralSource", label: "How did you hear about RevUC?" },
-  ],
   hacker: [
     name("firstName", "First name"),
     name("lastName", "Last name"),
@@ -50,12 +37,6 @@ export const fieldsByKind: Record<FormKind, Field[]> = {
     },
     OTHER_FIELD("otherLevelOfStudy", "Other level of study", "levelOfStudy"),
     name("country", "Country of residence"),
-    {
-      name: "eligible",
-      label: "I am a student and will be at least 18 at the event.",
-      type: "checkbox",
-      required: true,
-    },
     { name: "mlhCoc", label: "MLH Code of Conduct agreement", type: "checkbox", required: true },
     {
       name: "mlhSharing",
@@ -125,9 +106,6 @@ export const fieldsByKind: Record<FormKind, Field[]> = {
     { name: "additionalInfo", label: "Additional information", type: "textarea" },
     ...sponsorExtraFields,
   ],
-  volunteer: volunteerFields,
-  speaker: speakerFields,
-  "sponsor-representative": representativeFields,
 };
 export class FormError extends Error {
   constructor(
@@ -146,12 +124,7 @@ export function validUrl(value: string) {
     return false;
   }
 }
-export function validateAnswers(
-  kind: FormKind,
-  input: unknown,
-  settings?: EventSettings,
-  onboarding = false,
-): Answers {
+export function validateAnswers(kind: FormKind, input: unknown): Answers {
   const parsed = z
     .record(
       z.string(),
@@ -167,11 +140,7 @@ export function validateAnswers(
     throw new FormError({}, 400, "Some answers are too long or invalid. Please check your form.");
   const answers: Answers = {};
   const errors: Record<string, string> = {};
-  const fields = [
-    ...fieldsByKind[kind],
-    ...(onboarding && kind === "sponsor" ? sponsorOnboardingFields : []),
-    ...(onboarding && kind !== "interest" && kind !== "hacker" ? logisticsFields : []),
-  ];
+  const fields = fieldsByKind[kind];
   for (const field of fields) {
     if (!isVisible(field, parsed.data)) continue;
     const value = parsed.data[field.name];
@@ -203,7 +172,7 @@ export function validateAnswers(
       if (text && field.type === "url" && !validUrl(text))
         errors[field.name] = "Please enter a full http or https URL.";
       if (text && field.type === "tel") {
-        const phone = parsePhoneNumberFromString(text, phoneMetadata);
+        const phone = parsePhoneNumberFromString(text, "US", phoneMetadata);
         if (!phone?.isValid())
           errors[field.name] = "Enter a valid phone number including its country code.";
         else answers[field.name] = phone.number;
@@ -226,70 +195,21 @@ export function validateAnswers(
   if (kind === "hacker") {
     if (!COUNTRIES.includes(String(answers.country)))
       errors.country = "Please choose a country from the list.";
-    if (Number(answers.age) < 18 || Number(answers.age) > 100)
-      errors.age = "You must be at least 18 at the event.";
-    if (answers.levelOfStudy === "I'm not currently a student")
-      errors.levelOfStudy =
-        "RevUC is open to students. Contact the organizers about other ways to participate.";
+    if (Number(answers.age) < 13 || Number(answers.age) > 100)
+      errors.age = "Please select an age between 13 and 100.";
     const year = Number(answers.graduationYear);
     if (answers.graduationYear && (year < 2020 || year > 2100))
       errors.graduationYear = "Please enter a year between 2020 and 2100.";
   }
-  if (Number(answers.duration) > 240)
-    errors.duration = "Please choose a duration of up to 240 minutes.";
   if (kind === "sponsor" && answers.contactPreference === "Phone" && !answers.phone)
     errors.phone = "Enter a phone number or choose Email as your contact preference.";
   const diet = answers.dietRestrictions;
   if (Array.isArray(diet) && diet.includes("None") && diet.length > 1)
     errors.dietRestrictions = "Choose None by itself, or select your restrictions.";
-  if (
-    settings?.details.shirtSizes?.length &&
-    answers.shirtSize &&
-    !settings.details.shirtSizes.includes(String(answers.shirtSize)) &&
-    answers.shirtSize !== "No shirt"
-  )
-    errors.shirtSize = "Please choose an available shirt size.";
-  if (["judge-mentor", "volunteer", "speaker", "sponsor-representative"].includes(kind)) {
-    const slots = parsed.data.availabilitySlots;
-    const relevant =
-      settings?.slots.filter(
-        (s) =>
-          s.roles.includes(kind) ||
-          (kind === "judge-mentor" &&
-            Array.isArray(answers.roles) &&
-            answers.roles.some((role) => s.roles.includes(role))),
-      ) ?? [];
-    answers.availabilitySlots = Array.isArray(slots) ? [...new Set(slots)] : [];
+  if (kind === "judge-mentor") {
     answers.availabilityNotes =
       typeof parsed.data.availabilityNotes === "string" ? parsed.data.availabilityNotes.trim() : "";
-    if (
-      (answers.availabilitySlots as string[]).some((id) => !relevant.some((s) => s.id === id)) ||
-      (relevant.length &&
-        (kind !== "judge-mentor" || answers.availability === "Yes") &&
-        !(answers.availabilitySlots as string[]).length)
-    )
-      errors.availabilitySlots = "Please select an available session or shift.";
   }
-  if (settings?.details.emergencyContact && kind === "hacker") {
-    answers.emergencyContact =
-      typeof parsed.data.emergencyContact === "string" ? parsed.data.emergencyContact.trim() : "";
-  }
-  if (settings?.details.travelQuestions && kind !== "interest") {
-    answers.travelNeeds =
-      typeof parsed.data.travelNeeds === "string" ? parsed.data.travelNeeds.trim() : "";
-  }
-  if (settings?.details.waiverUrl && kind === "hacker") {
-    answers.waiverConsent = parsed.data.waiverConsent === true;
-    if (!answers.waiverConsent) errors.waiverConsent = "Please read and agree to the event waiver.";
-  }
-  if (settings?.details.mediaNotice && kind !== "interest")
-    answers.mediaConsent = parsed.data.mediaConsent === true;
   if (Object.keys(errors).length) throw new FormError(errors);
   return answers;
 }
-export const submissionEnvelope = z.object({
-  kind: z.enum(FORM_KINDS),
-  answers: z.unknown(),
-  requestId: z.uuid(),
-  website: z.string().max(200).optional(),
-});

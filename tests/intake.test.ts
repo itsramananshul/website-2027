@@ -1,225 +1,160 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { validateAnswers, FormError } from "../src/lib/intake/validation";
-import { consentSnapshot } from "../src/lib/intake/consents";
-import { validateResume, MAX_RESUME_BYTES } from "../src/lib/intake/storage";
-import { readJson, requireCron } from "../src/lib/intake/http";
-import { buildMessage, type Job } from "../src/lib/intake/notifications";
-import type { EventSettings } from "../src/lib/intake/definitions";
-const settings: EventSettings = {
-  id: "revuc-2027",
-  year: 2027,
-  registrationOpen: true,
-  capacity: 100,
-  startsAt: null,
-  endsAt: null,
-  confirmationDeadline: null,
-  timezone: "America/New_York",
-  slots: [],
-  details: {},
-};
-export const hacker = {
-  firstName: "José",
-  lastName: "O’Neil-张",
-  email: "person@example.com",
-  phone: "+91 9876543210",
-  age: 20,
-  school: "School not in list",
-  levelOfStudy: "Undergraduate University (3+ year)",
-  country: "India",
-  eligible: true,
-  mlhCoc: true,
-  mlhSharing: true,
-  mlhEmails: false,
-};
-const judge = {
-  fullName: "Amina O'Neil",
-  email: "judge@example.com",
-  phone: "+44 7911 123456",
-  organization: "Independent",
-  jobTitle: "Engineer",
-  expertiseAreas: ["Web Development"],
-  roles: ["Mentor"],
-  availability: "Yes",
-  shiftContact: "Email",
-  orientation: true,
-  confidentiality: true,
-  coc: true,
-};
-test("Unicode names and international numbers survive validation", () => {
-  const answer = validateAnswers("hacker", hacker, settings);
-  assert.equal(answer.firstName, "José");
-  assert.equal(answer.lastName, "O’Neil-张");
-  assert.equal(answer.phone, "+919876543210");
-  assert.equal(answer.major, "");
-  assert.equal(answer.sponsorResumeConsent, false);
-});
-test("email normalizes, unknown fields cannot become approvals", () => {
-  const answer = validateAnswers(
-    "hacker",
-    { ...hacker, email: " PERSON@EXAMPLE.COM ", status: "APPROVED", emailVerifiedAt: "today" },
-    settings,
-  );
-  assert.equal(answer.email, "person@example.com");
-  assert.equal(answer.status, undefined);
-});
-test("eligibility, required MLH agreements, and country are enforced", () => {
-  for (const change of [
-    { age: 17 },
-    { eligible: false },
-    { mlhSharing: false },
-    { country: "Atlantis" },
-    { levelOfStudy: "I'm not currently a student" },
-  ])
-    assert.throws(() => validateAnswers("hacker", { ...hacker, ...change }, settings), FormError);
-});
-test("marketing and sponsor permissions remain independent", () => {
-  const answer = validateAnswers(
-    "hacker",
-    { ...hacker, sponsorResumeConsent: true, sponsorContactConsent: false },
-    settings,
-  );
-  const snapshot = consentSnapshot(answer, settings);
-  assert.equal(snapshot.answers.mlhEmails, false);
-  assert.equal(snapshot.answers.sponsorResumeConsent, true);
-  assert.equal(snapshot.answers.sponsorContactConsent, false);
-  assert.match(snapshot.notices.mlhSharing, /https:\/\/dev.to/);
-});
-test("Other is required only when selected; multi-select answers are arrays", () => {
-  assert.throws(
-    () => validateAnswers("hacker", { ...hacker, dietRestrictions: ["Other"] }, settings),
-    FormError,
-  );
-  const answers = validateAnswers(
-    "hacker",
-    { ...hacker, dietRestrictions: ["Vegan", "Gluten-free"] },
-    settings,
-  );
-  assert.deepEqual(answers.dietRestrictions, ["Vegan", "Gluten-free"]);
-  assert.throws(() =>
-    validateAnswers("hacker", { ...hacker, dietRestrictions: ["None", "Vegan"] }, settings),
-  );
-});
-test("LinkedIn stays optional, supplied profile links must be URLs", () => {
-  assert.equal(validateAnswers("judge-mentor", judge, settings).linkedIn, "");
-  assert.throws(() =>
-    validateAnswers("judge-mentor", { ...judge, linkedIn: "javascript:alert(1)" }, settings),
-  );
-});
-test("judge conflicts are required, mentor-only applicants don't get judge questions", () => {
-  assert.equal(validateAnswers("judge-mentor", judge, settings).conflicts, undefined);
-  assert.throws(() =>
-    validateAnswers("judge-mentor", { ...judge, roles: ["Judge", "Mentor"] }, settings),
-  );
-  assert.equal(
-    validateAnswers(
-      "judge-mentor",
-      { ...judge, roles: ["Judge", "Mentor"], conflicts: "None" },
-      settings,
-    ).conflicts,
-    "None",
-  );
-});
-test("role-specific availability rejects invented shifts", () => {
-  const configured = {
-    ...settings,
-    slots: [
-      { id: "mentor-a", label: "April 10, 10 am", roles: ["Mentor"] },
-      { id: "judge-a", label: "April 11, 11 am", roles: ["Judge"] },
-    ],
-  };
-  assert.throws(() =>
-    validateAnswers("judge-mentor", { ...judge, availabilitySlots: ["judge-a"] }, configured),
-  );
-  assert.deepEqual(
-    validateAnswers("judge-mentor", { ...judge, availabilitySlots: ["mentor-a"] }, configured)
-      .availabilitySlots,
-    ["mentor-a"],
-  );
-});
-test("approved roles collect logistics; optional policy fields require configuration", () => {
-  const config = {
-    ...settings,
-    details: { waiverUrl: "https://example.com/waiver", mediaNotice: "May we publish photos?" },
-  };
-  assert.throws(() => validateAnswers("hacker", hacker, config));
-  const a = validateAnswers("hacker", { ...hacker, waiverConsent: true }, config);
-  assert.equal(a.mediaConsent, false);
-  assert.match(consentSnapshot(a, config).notices.waiverConsent, /example.com/);
-});
-test("private resumes reject disguised files and oversized PDFs", () => {
-  validateResume("resume.pdf", "application/pdf", Buffer.from("%PDF-1.7\n"));
-  assert.throws(() => validateResume("resume.pdf", "application/pdf", Buffer.from("not a pdf")));
-  assert.throws(() => validateResume("resume.html", "text/html", Buffer.from("%PDF-1.7\n")));
-  assert.throws(() =>
-    validateResume("resume.pdf", "application/pdf", new Uint8Array(MAX_RESUME_BYTES + 1)),
-  );
-});
-test("JSON request limits also cover streamed bodies without content-length", async () => {
-  const body = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new Uint8Array(65537));
-      controller.close();
-    },
+import { submissionData, saveForm } from "../src/lib/intake/submission";
+import {
+  validateResume,
+  MAX_RESUME_BYTES,
+  cleanupToken,
+  cleanupPath,
+} from "../src/lib/intake/storage";
+import { hacker, judge, sponsor } from "./fixtures";
+
+test("existing hacker interest choices work without new answers or verification", () => {
+  const result = validateAnswers("hacker", {
+    ...hacker,
+    age: "13",
+    levelOfStudy: "I'm not currently a student",
   });
-  const request = new Request("http://localhost/api", {
-    method: "POST",
-    body,
-    duplex: "half",
-  } as RequestInit);
-  await assert.rejects(
-    () => readJson(request),
-    (e: unknown) => e instanceof FormError && e.status === 413,
-  );
-  await assert.rejects(
-    () => readJson(new Request("http://localhost/api", { method: "POST", body: "{" })),
-    FormError,
-  );
-});
-test("cron rejects malformed unicode credentials without crashing", () => {
-  process.env.CRON_SECRET = "secret";
-  assert.throws(
-    () =>
-      requireCron(new Request("http://localhost", { headers: { authorization: "Bearer éééééé" } })),
-    FormError,
-  );
-});
-test("Other-only applicants aren't labelled judges; HTML escapes names", () => {
-  process.env.APP_PUBLIC_URL = "http://localhost:3001";
-  const job = {
-    id: "id",
-    submission_id: "id",
-    type: "receipt",
-    payload: { link: "https://example.com/registration#token=abc" },
-    email: "person@example.com",
-    kind: "judge-mentor",
-    data: { fullName: "<script>", roles: ["Other"] },
-    attempts: 1,
-    lease: "lease",
-  } as Job;
-  const message = buildMessage(job);
-  assert.match(message.text, /helping with the event/);
-  assert.doesNotMatch(message.text, /interest in judge/);
-  assert.doesNotMatch(message.html, /<script>/);
-});
-
-test("declared unavailable judges can leave shifts blank", () => {
-  const configured = {
-    ...settings,
-    slots: [{ id: "mentor-a", label: "April 10, 10 am", roles: ["Mentor"] }],
-  };
-  assert.deepEqual(
-    validateAnswers("judge-mentor", { ...judge, availability: "No" }, configured).availabilitySlots,
-    [],
-  );
-});
-
-test("consent history retains the pending MLH notice until partnership confirmation", () => {
-  const pending = consentSnapshot(hacker, settings);
-  assert.match(pending.notices.mlhPartnership, /will not be shared/);
+  assert.equal(result.age, 13);
+  assert.equal(result.firstName, "Zoë");
+  assert.equal(result.lastName, "O'Connor");
+  assert.equal(result.phone, "+15135550123");
+  assert.equal(result.sponsorResumeConsent, false);
+  assert.equal(result.sponsorContactConsent, false);
+  assert.equal(result.mlhEmails, false);
   assert.equal(
-    consentSnapshot(hacker, { ...settings, details: { mlhPartnerConfirmed: true } }).notices
-      .mlhPartnership,
-    undefined,
+    validateAnswers("hacker", { ...hacker, phone: "+91 98765 43210" }).phone,
+    "+919876543210",
   );
+});
+test("the existing MLH requirements remain required and marketing stays optional", () => {
+  assert.throws(
+    () => validateAnswers("hacker", { ...hacker, mlhCoc: false, mlhSharing: false }),
+    (error: unknown) =>
+      error instanceof FormError && Boolean(error.fields.mlhCoc && error.fields.mlhSharing),
+  );
+});
+test("new optional answers validate without adding eligibility or approval gates", () => {
+  const result = validateAnswers("hacker", {
+    ...hacker,
+    dietRestrictions: ["Other"],
+    otherDiet: "Nut-free",
+    sponsorResumeConsent: true,
+    githubUrl: "https://github.com/example",
+  });
+  assert.deepEqual(result.dietRestrictions, ["Other"]);
+  assert.equal(result.sponsorResumeConsent, true);
+  assert.equal(result.sponsorContactConsent, false);
+  assert.throws(
+    () => validateAnswers("hacker", { ...hacker, githubUrl: "javascript:alert(1)" }),
+    FormError,
+  );
+  assert.throws(
+    () => validateAnswers("hacker", { ...hacker, dietRestrictions: ["None", "Vegan"] }),
+    FormError,
+  );
+  assert.throws(
+    () => validateAnswers("hacker", { ...hacker, levelOfStudy: "Other", otherLevelOfStudy: "" }),
+    FormError,
+  );
+});
+test("judges can omit all extra questions and LinkedIn; conditional details still validate", () => {
+  const result = validateAnswers("judge-mentor", judge);
+  assert.equal(result.linkedIn, "");
+  assert.equal(result.shiftContact, "");
+  assert.equal(result.orientation, false);
+  assert.throws(
+    () => validateAnswers("judge-mentor", { ...judge, roles: ["Other"], otherRole: "" }),
+    FormError,
+  );
+});
+test("existing database columns and notification payloads stay compatible", () => {
+  const h = submissionData("hacker", validateAnswers("hacker", hacker), "revuc-2027/test.pdf");
+  assert.equal(h.table, "hacker_interest");
+  assert.equal(h.endpoint, "/api/hacker-interest/notify");
+  assert.equal(h.row.age, "20");
+  assert.equal(h.row.first_name, "Zoë");
+  assert.equal(h.row.resume_path, "revuc-2027/test.pdf");
+  assert.ok(!("email" in h.row.extra_data));
+  const j = submissionData("judge-mentor", validateAnswers("judge-mentor", judge));
+  assert.equal(j.table, "judge_mentor_interest");
+  assert.equal(j.row.expertise_areas, "Software Development, Other: Robotics");
+  assert.equal(j.row.roles, "Judge, Mentor");
+  assert.equal(j.row.availability, "Other: Afternoon");
+  assert.equal(j.row.linkedin_url, "");
+  assert.ok("selectedRoles" in j.notification);
+  assert.deepEqual(j.notification.selectedRoles, ["Judge", "Mentor"]);
+  const s = submissionData("sponsor", validateAnswers("sponsor", sponsor));
+  assert.equal(s.table, "sponsor_interest");
+  assert.equal(s.row.sponsorship_level, "Silver - ~$1k-3k");
+  assert.equal(s.row.primary_goal, "Recruit Top Talent, Other: Student projects");
+  assert.equal(s.row.side_events, "Workshop, Other: Demo night");
+});
+test("a failed database save never triggers email", async () => {
+  let mail = 0;
+  const database = {
+    from: () => ({ insert: async () => ({ error: { message: "Unavailable" } }) }),
+  };
+  await assert.rejects(
+    saveForm(database, "hacker", hacker, undefined, async () => {
+      mail++;
+      return new Response();
+    }),
+  );
+  assert.equal(mail, 0);
+});
+test("email is called immediately after save and email failure keeps the saved result", async () => {
+  const calls: string[] = [];
+  const database = {
+    from: (table: string) => ({
+      insert: async () => {
+        calls.push(table);
+        return { error: null };
+      },
+    }),
+  };
+  const result = await saveForm(database, "sponsor", sponsor, undefined, async (url) => {
+    calls.push(String(url));
+    return new Response("", { status: 503 });
+  });
+  assert.deepEqual(calls, ["sponsor_interest", "/api/sponsor-interest/notify"]);
+  assert.equal(result.saved, true);
+  assert.match(result.notificationWarning, /don't need to submit again/);
+});
+test("all three original Resend handlers are unchanged from main", () => {
+  for (const kind of ["hacker-interest", "judge-mentor-interest", "sponsor-interest"]) {
+    const file = `src/app/api/${kind}/notify/route.ts`;
+    const original = execFileSync("git", ["show", `origin/main:${file}`], {
+      encoding: "utf8",
+    }).replace(/\r\n/g, "\n");
+    assert.equal(readFileSync(file, "utf8").replace(/\r\n/g, "\n"), original);
+  }
+});
+test("resume checks reject invalid PDFs and oversized files", () => {
+  assert.doesNotThrow(() =>
+    validateResume("resume.pdf", "application/pdf", Buffer.from("%PDF-1.7\nexample")),
+  );
+  for (const [name, type, bytes] of [
+    ["resume.exe", "application/pdf", Buffer.from("%PDF-")],
+    ["resume.pdf", "text/plain", Buffer.from("%PDF-")],
+    ["resume.pdf", "application/pdf", Buffer.from("not a pdf")],
+    ["resume.pdf", "application/pdf", new Uint8Array(MAX_RESUME_BYTES + 1)],
+  ] as const)
+    assert.throws(() => validateResume(name, type, bytes), FormError);
+});
+test("cleanup receipts are scoped to their own upload, expire, and cannot be forged", () => {
+  const path = "revuc-2027/11111111-1111-4111-8111-111111111111.pdf";
+  const token = cleanupToken(path, "test-secret", 1000);
+  assert.equal(cleanupPath(token, "test-secret", 2000), path);
+  assert.throws(() => cleanupPath(token, "different-secret", 2000), FormError);
+  assert.throws(() => cleanupPath(token, "test-secret", 3601001), FormError);
+  const [payload, signature] = token.split(".");
+  const forged = Buffer.from(
+    JSON.stringify({ path: "someone-elses.pdf", expires: 9999999 }),
+  ).toString("base64url");
+  assert.throws(() => cleanupPath(`${forged}.${signature}`, "test-secret", 2000), FormError);
+  assert.throws(() => cleanupPath(`${payload}.bad.extra`, "test-secret", 2000), FormError);
 });
