@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 import { InputField } from "@/components/ui/InputField";
-import { supabase } from "@/lib/supabase";
+import Link from "next/link";
+import { Fields } from "@/components/forms/Fields";
+import {
+  useIntakeForm,
+  FormMessages,
+  SubmitButton,
+  FormPrivacy,
+} from "@/components/forms/useIntakeForm";
+import { sponsorExtraFields } from "@/lib/intake/definitions";
 
 /* textColor: darkened tier hue so the label stays readable on white */
 const SPONSORSHIP_TIERS = [
@@ -37,6 +45,27 @@ const SPONSORSHIP_TIERS = [
     blurb:
       "The ultimate way to show your commitment to building the community at Cincinnati. Get exclusive interaction opportunities with the best talent in the region.",
   },
+  {
+    name: "Not sure yet",
+    amount: "",
+    gradient: "linear-gradient(to bottom, #EDF6FF, #B7D9FF)",
+    textColor: "#151477",
+    blurb: "Discuss the available options with our sponsorship team",
+  },
+  {
+    name: "Custom package",
+    amount: "",
+    gradient: "linear-gradient(to bottom, #EDF6FF, #B7D9FF)",
+    textColor: "#151477",
+    blurb: "Discuss a package that fits your goals",
+  },
+  {
+    name: "In-kind support",
+    amount: "",
+    gradient: "linear-gradient(to bottom, #EDF6FF, #B7D9FF)",
+    textColor: "#151477",
+    blurb: "Explore contributions such as prizes, food, hardware, or credits",
+  },
 ];
 
 const PRIMARY_GOALS = [
@@ -67,14 +96,6 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 }
 
-interface Errors {
-  contactName?: string;
-  email?: string;
-  organisation?: string;
-  sponsorshipTier?: string;
-  primaryGoal?: string;
-}
-
 export default function SponsorInterestPage() {
   const [submitted, setSubmitted] = useState(false);
   const [contactName, setContactName] = useState("");
@@ -86,13 +107,14 @@ export default function SponsorInterestPage() {
   const [selectedSideEvents, setSelectedSideEvents] = useState<string[]>([]);
   const [otherSideEvent, setOtherSideEvent] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
-  const [errors, setErrors] = useState<Errors>({});
+  const { errors, setErrors, isSubmitting, submit, settings, extras, changeExtra, touch } =
+    useIntakeForm("sponsor");
 
   function toggleGoal(goal: string) {
     setSelectedGoals((prev) =>
       prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal],
     );
-    if (errors.primaryGoal) setErrors((prev) => ({ ...prev, primaryGoal: undefined }));
+    if (errors.selectedGoals) setErrors((prev) => ({ ...prev, selectedGoals: undefined }));
   }
 
   function toggleSideEvent(event: string) {
@@ -112,78 +134,27 @@ export default function SponsorInterestPage() {
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    const next: Errors = {};
-
-    if (!contactName.trim()) next.contactName = "Contact name is required";
-    if (!email.trim()) {
-      next.email = "Email is required";
-    } else if (!isValidEmail(email)) {
-      next.email = "Please enter a valid email (e.g. name@domain.com)";
-    }
-    if (!organisation.trim()) next.organisation = "Organisation name is required";
-    if (!sponsorshipTier) next.sponsorshipTier = "Please select a sponsorship tier";
-    if (selectedGoals.length === 0) next.primaryGoal = "Please select at least one goal";
-
-    if (Object.keys(next).length > 0) {
-      setErrors(next);
-      return;
-    }
-
-    const tierData = SPONSORSHIP_TIERS.find((t) => t.name === sponsorshipTier);
-    const tierValue = tierData ? `${tierData.name} - ${tierData.amount}` : sponsorshipTier;
-
-    const goalsValue = selectedGoals
-      .map((g) => (g === "Other" && otherGoal.trim() ? `Other: ${otherGoal.trim()}` : g))
-      .join(", ");
-
-    const sideEventsValue = selectedSideEvents.length > 0
-      ? selectedSideEvents
-        .map((e) => (e === "Other" && otherSideEvent.trim() ? `Other: ${otherSideEvent.trim()}` : e))
-        .join(", ")
-      : null;
-
-    const { error: dbError } = await supabase.from("sponsor_interest").insert({
-      contact_name: contactName.trim(),
-      email: email.trim(),
-      organisation: organisation.trim(),
-      sponsorship_level: tierValue,
-      primary_goal: goalsValue,
-      side_events: sideEventsValue,
-      additional_info: additionalInfo.trim() || null,
-    });
-
-    if (dbError) {
-      setErrors({ email: "Something went wrong, please try again." });
-      return;
-    }
-
-    setSubmitted(true);
-
-    /*Send sponsor interest notification email*/
-    fetch("/api/sponsor-interest/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contactName: contactName.trim(),
-        email: email.trim(),
-        organisation: organisation.trim(),
-        sponsorshipLevel: tierValue,
-        primaryGoal: goalsValue,
-        sideEvents: sideEventsValue,
-        additionalInfo: additionalInfo.trim() || null,
-      }),
-    }).catch((err) => {
-      console.error("Failed to send sponsor interest notification email", err);
-    });
+    if (
+      await submit({
+        ...extras,
+        contactName,
+        email,
+        organisation,
+        sponsorshipTier,
+        selectedGoals,
+        otherGoal,
+        selectedSideEvents,
+        otherSideEvent,
+        additionalInfo,
+      })
+    )
+      setSubmitted(true);
   }
 
   return (
     <div className="relative min-h-screen pt-24 pb-16 flex items-center justify-center px-4">
       {/* Decorative background blobs */}
-      <div
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        aria-hidden="true"
-      >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-20 -left-20 h-96 w-96 rounded-full bg-[#228CF6]/10 blur-3xl" />
         <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#19E363]/10 blur-3xl" />
       </div>
@@ -217,20 +188,28 @@ export default function SponsorInterestPage() {
                   strokeWidth={2.5}
                   viewBox="0 0 24 24"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M4.5 12.75l6 6 9-13.5"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
               </div>
+              <p role="status" className="text-sm text-gray-600">
+                Your response is saved. We have queued your confirmation email.
+              </p>
+              <Link href="/registration" className="text-[#228CF6] underline">
+                Review your details or request a new email link
+              </Link>
               <h2 className="text-2xl font-bold text-[#151477]">Thank you!</h2>
               <p className="text-[#151477]/70">
                 We&apos;ve received your interest. Our team will reach out soon.
               </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
+            <form
+              onSubmit={handleSubmit}
+              onChange={touch}
+              className="flex flex-col gap-6"
+              noValidate
+            >
+              <FormMessages errors={errors} />
               <InputField
                 name="contactName"
                 label="Primary Contact Name"
@@ -238,7 +217,8 @@ export default function SponsorInterestPage() {
                 value={contactName}
                 onChange={(e) => {
                   setContactName(e.target.value);
-                  if (errors.contactName) setErrors((prev) => ({ ...prev, contactName: undefined }));
+                  if (errors.contactName)
+                    setErrors((prev) => ({ ...prev, contactName: undefined }));
                 }}
                 error={errors.contactName}
                 required
@@ -266,7 +246,8 @@ export default function SponsorInterestPage() {
                 value={organisation}
                 onChange={(e) => {
                   setOrganisation(e.target.value);
-                  if (errors.organisation) setErrors((prev) => ({ ...prev, organisation: undefined }));
+                  if (errors.organisation)
+                    setErrors((prev) => ({ ...prev, organisation: undefined }));
                 }}
                 error={errors.organisation}
                 required
@@ -294,29 +275,31 @@ export default function SponsorInterestPage() {
                     <label
                       key={tier.name}
                       style={{ background: tier.gradient }}
-                      className={`flex flex-col items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition-all ${sponsorshipTier === tier.name
+                      className={`flex flex-col items-center gap-2 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                        sponsorshipTier === tier.name
                           ? "border-gray-900 ring-2 ring-offset-1 ring-gray-900"
                           : "border-gray-400/60"
-                        }`}
+                      }`}
                     >
                       <input
                         type="radio"
                         name="sponsorshipTier"
+                        aria-invalid={Boolean(errors.sponsorshipTier)}
+                        aria-describedby={
+                          errors.sponsorshipTier ? "summary-sponsorshipTier" : undefined
+                        }
                         value={tier.name}
                         checked={sponsorshipTier === tier.name}
                         onChange={() => {
                           setSponsorshipTier(tier.name);
-                          if (errors.sponsorshipTier) setErrors((prev) => ({ ...prev, sponsorshipTier: undefined }));
+                          if (errors.sponsorshipTier)
+                            setErrors((prev) => ({ ...prev, sponsorshipTier: undefined }));
                         }}
                         className="h-4 w-4 appearance-none rounded-full border border-gray-500 bg-white checked:border-[5px] checked:border-[#151477]"
                       />
                       <span className="flex items-baseline gap-1.5">
-                        <span className="text-base font-bold text-gray-950">
-                          {tier.name}
-                        </span>
-                        <span className="text-sm font-semibold text-gray-900">
-                          {tier.amount}
-                        </span>
+                        <span className="text-base font-bold text-gray-950">{tier.name}</span>
+                        <span className="text-sm font-semibold text-gray-900">{tier.amount}</span>
                       </span>
                     </label>
                   ))}
@@ -335,6 +318,11 @@ export default function SponsorInterestPage() {
                     <label key={goal} className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        name="selectedGoals"
+                        aria-invalid={Boolean(errors.selectedGoals)}
+                        aria-describedby={
+                          errors.selectedGoals ? "summary-selectedGoals" : undefined
+                        }
                         checked={selectedGoals.includes(goal)}
                         onChange={() => toggleGoal(goal)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
@@ -349,13 +337,18 @@ export default function SponsorInterestPage() {
                   <input
                     type="text"
                     placeholder="Please specify..."
+                    id="otherGoal"
+                    name="otherGoal"
+                    aria-invalid={Boolean(errors.otherGoal)}
+                    aria-describedby={errors.otherGoal ? "summary-otherGoal" : undefined}
+                    aria-label="other Goal"
                     value={otherGoal}
                     onChange={(e) => setOtherGoal(e.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                   />
                 )}
-                {errors.primaryGoal && (
-                  <p className="mt-1 text-sm text-red-600">{errors.primaryGoal}</p>
+                {errors.selectedGoals && (
+                  <p className="mt-1 text-sm text-red-600">{errors.selectedGoals}</p>
                 )}
               </div>
 
@@ -373,6 +366,11 @@ export default function SponsorInterestPage() {
                     <label key={event} className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        name="selectedSideEvents"
+                        aria-invalid={Boolean(errors.selectedSideEvents)}
+                        aria-describedby={
+                          errors.selectedSideEvents ? "summary-selectedSideEvents" : undefined
+                        }
                         checked={selectedSideEvents.includes(event)}
                         onChange={() => toggleSideEvent(event)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
@@ -387,6 +385,11 @@ export default function SponsorInterestPage() {
                   <input
                     type="text"
                     placeholder="Please specify..."
+                    id="otherSideEvent"
+                    name="otherSideEvent"
+                    aria-invalid={Boolean(errors.otherSideEvent)}
+                    aria-describedby={errors.otherSideEvent ? "summary-otherSideEvent" : undefined}
+                    aria-label="other Side Event"
                     value={otherSideEvent}
                     onChange={(e) => setOtherSideEvent(e.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
@@ -397,7 +400,8 @@ export default function SponsorInterestPage() {
               {/* Additional info — optional */}
               <div>
                 <label htmlFor="additionalInfo" className="mb-1 block font-semibold text-gray-900">
-                  Please provide any additional information or comments you would like to share with us...
+                  Please provide any additional information or comments you would like to share with
+                  us...
                 </label>
                 <textarea
                   id="additionalInfo"
@@ -410,12 +414,14 @@ export default function SponsorInterestPage() {
                 />
               </div>
 
-              <button
-                type="submit"
-                className="mt-2 w-full rounded-md border-2 border-[#19E363] bg-[#151477] px-6 py-3 font-semibold text-[#EDF6FF] transition-all duration-200 hover:bg-[#19E363] hover:text-[#151477] active:scale-[0.98]"
-              >
-                Submit
-              </button>
+              <Fields
+                fields={sponsorExtraFields}
+                answers={extras}
+                onChange={changeExtra}
+                errors={errors}
+              />
+              <FormPrivacy settings={settings} />
+              <SubmitButton pending={isSubmitting} />
             </form>
           )}
         </div>
