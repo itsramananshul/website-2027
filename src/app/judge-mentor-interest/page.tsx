@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { InputField } from "@/components/ui/InputField";
-import { supabase } from "@/lib/supabase";
+import { Fields, AvailabilityFields } from "@/components/forms/Fields";
+import {
+  useIntakeForm,
+  FormMessages,
+  SubmitButton,
+  FormPrivacy,
+} from "@/components/forms/useIntakeForm";
+import { judgeExtraFields } from "@/lib/intake/definitions";
 import { COUNTRY_CODES } from "./countryCodes";
 
 const EXPERTISE_AREAS = [
@@ -23,13 +30,6 @@ const EXPERTISE_AREAS = [
 
 const ROLES = ["Judge", "Mentor", "Other"];
 
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 10);
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 }
@@ -38,18 +38,6 @@ function isoToFlagEmoji(iso2: string): string {
   return iso2
     .toUpperCase()
     .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
-}
-
-interface Errors {
-  fullName?: string;
-  email?: string;
-  linkedIn?: string;
-  phone?: string;
-  organization?: string;
-  jobTitle?: string;
-  expertiseAreas?: string;
-  roles?: string;
-  availability?: string;
 }
 
 export default function JudgeMentorInterestPage() {
@@ -70,15 +58,24 @@ export default function JudgeMentorInterestPage() {
   const [specialRequirements, setSpecialRequirements] = useState("");
   const [expectations, setExpectations] = useState("");
   const [additionalInfo, setAdditionalInfo] = useState("");
-  const [errors, setErrors] = useState<Errors>({});
+  const {
+    errors,
+    setErrors,
+    isSubmitting,
+    submit,
+    notificationWarning,
+    extras,
+    changeExtra,
+    touch,
+  } = useIntakeForm("judge-mentor");
 
   function handleNameChange(val: string) {
-    setFullName(val.replace(/[^a-zA-Z\s]/g, ""));
+    setFullName(val);
     if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: undefined }));
   }
 
   function handlePhoneChange(raw: string) {
-    setPhone(formatPhone(raw));
+    setPhone(raw);
     if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
   }
 
@@ -99,111 +96,41 @@ export default function JudgeMentorInterestPage() {
   }
 
   function toggleRole(role: string) {
-    setRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
+    setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
     if (errors.roles) setErrors((prev) => ({ ...prev, roles: undefined }));
   }
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    const next: Errors = {};
-    const countryCode =
-      COUNTRY_CODES.find((c) => c.iso2 === countryIso2)?.dialCode ?? COUNTRY_CODES[0].dialCode;
-
-    if (!fullName.trim()) next.fullName = "Full name is required";
-    if (!email.trim()) {
-      next.email = "Email is required";
-    } else if (!isValidEmail(email)) {
-      next.email = "Please enter a valid email (e.g. name@domain.com)";
-    }
-    if (!linkedIn.trim()) next.linkedIn = "LinkedIn profile URL is required";
-    const phoneDigits = phone.replace(/\D/g, "");
-    if (!phone.trim()) {
-      next.phone = "Phone number is required";
-    } else if (phoneDigits.length !== 10) {
-      next.phone = "Phone number must be exactly 10 digits";
-    }
-    if (!organization.trim()) next.organization = "Organisation is required";
-    if (!jobTitle.trim()) next.jobTitle = "Job title is required";
-    if (expertiseAreas.length === 0) next.expertiseAreas = "Please select at least one area of expertise";
-    if (roles.length === 0) next.roles = "Please select at least one role";
-    if (!availability) next.availability = "Please select an availability option";
-
-    if (Object.keys(next).length > 0) {
-      setErrors(next);
-      return;
-    }
-
-    const expertiseValue = expertiseAreas.length > 0
-      ? expertiseAreas
-          .map((a) => (a === "Other" && otherExpertise.trim() ? `Other: ${otherExpertise.trim()}` : a))
-          .join(", ")
-      : null;
-
-    const rolesValue = roles.length > 0
-      ? roles
-          .map((r) => (r === "Other" && otherRole.trim() ? `Other: ${otherRole.trim()}` : r))
-          .join(", ")
-      : null;
-
-    const availabilityValue =
-      availability === "Other" && otherAvailability.trim()
-        ? `Other: ${otherAvailability.trim()}`
-        : availability;
-
-    const { error: dbError } = await supabase.from("judge_mentor_interest").insert({
-      full_name: fullName.trim(),
-      email: email.trim(),
-      linkedin_url: linkedIn.trim(),
-      phone: `${countryCode} ${phone.trim()}`,
-      organization: organization.trim(),
-      job_title: jobTitle.trim(),
-      expertise_areas: expertiseValue,
-      roles: rolesValue,
-      availability: availabilityValue,
-      special_requirements: specialRequirements.trim() || null,
-      expectations: expectations.trim() || null,
-      additional_info: additionalInfo.trim() || null,
-    });
-
-    if (dbError) {
-      setErrors({ email: "Something went wrong, please try again." });
-      return;
-    }
-
-    setSubmitted(true);
-
-    fetch("/api/judge-mentor-interest/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fullName: fullName.trim(),
-        email: email.trim(),
-        linkedIn: linkedIn.trim(),
-        phone: `${countryCode} ${phone.trim()}`,
-        organization: organization.trim(),
-        jobTitle: jobTitle.trim(),
-        expertiseAreas: expertiseValue,
-        roles: rolesValue,
-        selectedRoles: roles,
-        availability: availabilityValue,
-        specialRequirements: specialRequirements.trim() || null,
-        expectations: expectations.trim() || null,
-        additionalInfo: additionalInfo.trim() || null,
-      }),
-    }).catch((err) => {
-      console.error("Failed to send judge/mentor interest notification email", err);
-    });
+    if (
+      await submit({
+        ...extras,
+        fullName,
+        email,
+        linkedIn,
+        phone: phone.trim().startsWith("+")
+          ? phone
+          : `${COUNTRY_CODES.find((c) => c.iso2 === countryIso2)?.dialCode ?? "+1"} ${phone}`,
+        organization,
+        jobTitle,
+        expertiseAreas,
+        otherExpertise,
+        roles,
+        otherRole,
+        availability,
+        otherAvailability,
+        specialRequirements,
+        expectations,
+        additionalInfo,
+      })
+    )
+      setSubmitted(true);
   }
 
   return (
     <div className="relative min-h-screen pt-24 pb-16 flex items-center justify-center px-4">
       {/* Decorative background blobs */}
-      <div
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        aria-hidden="true"
-      >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-20 -left-20 h-96 w-96 rounded-full bg-[#228CF6]/10 blur-3xl" />
         <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#19E363]/10 blur-3xl" />
       </div>
@@ -237,20 +164,27 @@ export default function JudgeMentorInterestPage() {
                   strokeWidth={2.5}
                   viewBox="0 0 24 24"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M4.5 12.75l6 6 9-13.5"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
               </div>
+              {notificationWarning && (
+                <p role="status" className="text-sm text-gray-600">
+                  {notificationWarning}
+                </p>
+              )}
               <h2 className="text-2xl font-bold text-[#151477]">Thank you!</h2>
               <p className="text-[#151477]/70">
                 We&apos;ve received your interest. Our team will reach out soon.
               </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
+            <form
+              onSubmit={handleSubmit}
+              onChange={touch}
+              className="flex flex-col gap-6"
+              noValidate
+            >
+              <FormMessages errors={errors} />
               {/* Full Name */}
               <InputField
                 name="fullName"
@@ -281,7 +215,7 @@ export default function JudgeMentorInterestPage() {
               {/* LinkedIn */}
               <InputField
                 name="linkedIn"
-                label="LinkedIn Profile URL"
+                label="LinkedIn Profile URL (optional)"
                 placeholder="e.g. linkedin.com/in/janesmit"
                 value={linkedIn}
                 onChange={(e) => {
@@ -289,7 +223,6 @@ export default function JudgeMentorInterestPage() {
                   if (errors.linkedIn) setErrors((prev) => ({ ...prev, linkedIn: undefined }));
                 }}
                 error={errors.linkedIn}
-                required
               />
 
               {/* Phone */}
@@ -301,6 +234,7 @@ export default function JudgeMentorInterestPage() {
                   <select
                     id="countryCode"
                     name="countryCode"
+                    aria-label="Phone country code"
                     value={countryIso2}
                     onChange={(e) => setCountryIso2(e.target.value)}
                     className="w-28 shrink-0 rounded-md border border-gray-300 bg-white px-2 py-2 text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
@@ -315,6 +249,9 @@ export default function JudgeMentorInterestPage() {
                     id="phone"
                     type="tel"
                     name="phone"
+                    autoComplete="tel-national"
+                    aria-invalid={Boolean(errors.phone)}
+                    aria-describedby={errors.phone ? "phone-error" : undefined}
                     value={phone}
                     onChange={(e) => handlePhoneChange(e.target.value)}
                     placeholder="e.g. 5558675309"
@@ -326,7 +263,9 @@ export default function JudgeMentorInterestPage() {
                   />
                 </div>
                 {errors.phone && (
-                  <p className="mt-1 text-sm text-red-600">{errors.phone}</p>
+                  <p id="phone-error" className="mt-1 text-sm text-red-600">
+                    {errors.phone}
+                  </p>
                 )}
               </div>
 
@@ -338,7 +277,8 @@ export default function JudgeMentorInterestPage() {
                 value={organization}
                 onChange={(e) => {
                   setOrganization(e.target.value);
-                  if (errors.organization) setErrors((prev) => ({ ...prev, organization: undefined }));
+                  if (errors.organization)
+                    setErrors((prev) => ({ ...prev, organization: undefined }));
                 }}
                 error={errors.organization}
                 required
@@ -369,6 +309,11 @@ export default function JudgeMentorInterestPage() {
                     <label key={area} className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        name="expertiseAreas"
+                        aria-invalid={Boolean(errors.expertiseAreas)}
+                        aria-describedby={
+                          errors.expertiseAreas ? "summary-expertiseAreas" : undefined
+                        }
                         checked={expertiseAreas.includes(area)}
                         onChange={() => toggleExpertise(area)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
@@ -383,6 +328,11 @@ export default function JudgeMentorInterestPage() {
                   <input
                     type="text"
                     placeholder="Please specify..."
+                    id="otherExpertise"
+                    name="otherExpertise"
+                    aria-invalid={Boolean(errors.otherExpertise)}
+                    aria-describedby={errors.otherExpertise ? "summary-otherExpertise" : undefined}
+                    aria-label="other Expertise"
                     value={otherExpertise}
                     onChange={(e) => setOtherExpertise(e.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
@@ -404,6 +354,9 @@ export default function JudgeMentorInterestPage() {
                     <label key={role} className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        name="roles"
+                        aria-invalid={Boolean(errors.roles)}
+                        aria-describedby={errors.roles ? "summary-roles" : undefined}
                         checked={roles.includes(role)}
                         onChange={() => toggleRole(role)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
@@ -418,14 +371,17 @@ export default function JudgeMentorInterestPage() {
                   <input
                     type="text"
                     placeholder="Please specify..."
+                    id="otherRole"
+                    name="otherRole"
+                    aria-invalid={Boolean(errors.otherRole)}
+                    aria-describedby={errors.otherRole ? "summary-otherRole" : undefined}
+                    aria-label="other Role"
                     value={otherRole}
                     onChange={(e) => setOtherRole(e.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                   />
                 )}
-                {errors.roles && (
-                  <p className="mt-1 text-sm text-red-600">{errors.roles}</p>
-                )}
+                {errors.roles && <p className="mt-1 text-sm text-red-600">{errors.roles}</p>}
               </div>
 
               {/* Availability — required */}
@@ -445,11 +401,14 @@ export default function JudgeMentorInterestPage() {
                       <input
                         type="radio"
                         name="availability"
+                        aria-invalid={Boolean(errors.availability)}
+                        aria-describedby={errors.availability ? "summary-availability" : undefined}
                         value={option}
                         checked={availability === option}
                         onChange={() => {
                           setAvailability(option);
-                          if (errors.availability) setErrors((prev) => ({ ...prev, availability: undefined }));
+                          if (errors.availability)
+                            setErrors((prev) => ({ ...prev, availability: undefined }));
                         }}
                         className="h-4 w-4 shrink-0 accent-[#151477]"
                       />
@@ -463,6 +422,13 @@ export default function JudgeMentorInterestPage() {
                   <input
                     type="text"
                     placeholder="Please specify..."
+                    id="otherAvailability"
+                    name="otherAvailability"
+                    aria-invalid={Boolean(errors.otherAvailability)}
+                    aria-describedby={
+                      errors.otherAvailability ? "summary-otherAvailability" : undefined
+                    }
+                    aria-label="other Availability"
                     value={otherAvailability}
                     onChange={(e) => setOtherAvailability(e.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
@@ -475,7 +441,10 @@ export default function JudgeMentorInterestPage() {
 
               {/* Special requirements — optional */}
               <div>
-                <label htmlFor="specialRequirements" className="mb-1 block font-semibold text-gray-900">
+                <label
+                  htmlFor="specialRequirements"
+                  className="mb-1 block font-semibold text-gray-900"
+                >
                   Do you have any special requirements or accommodations?
                 </label>
                 <textarea
@@ -509,7 +478,8 @@ export default function JudgeMentorInterestPage() {
               {/* Additional info — optional */}
               <div>
                 <label htmlFor="additionalInfo" className="mb-1 block font-semibold text-gray-900">
-                  Please provide any additional information or comments you would like us to consider.
+                  Please provide any additional information or comments you would like us to
+                  consider.
                 </label>
                 <textarea
                   id="additionalInfo"
@@ -522,12 +492,20 @@ export default function JudgeMentorInterestPage() {
                 />
               </div>
 
-              <button
-                type="submit"
-                className="mt-2 w-full rounded-md border-2 border-[#19E363] bg-[#151477] px-6 py-3 font-semibold text-[#EDF6FF] transition-all duration-200 hover:bg-[#19E363] hover:text-[#151477] active:scale-[0.98]"
-              >
-                Submit
-              </button>
+              <Fields
+                fields={judgeExtraFields}
+                answers={{ ...extras, roles }}
+                onChange={changeExtra}
+                errors={errors}
+              />
+              <AvailabilityFields
+                kind="judge-mentor"
+                answers={{ ...extras, roles }}
+                onChange={changeExtra}
+                errors={errors}
+              />
+              <FormPrivacy />
+              <SubmitButton pending={isSubmitting} />
             </form>
           )}
         </div>
