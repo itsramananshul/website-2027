@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { InputField } from "@/components/ui/InputField";
-import { supabase } from "@/lib/supabase";
-import { SCHOOLS } from "./schools";
+import { SchoolField } from "@/components/forms/SchoolField";
+import { Fields } from "@/components/forms/Fields";
+import {
+  useIntakeForm,
+  FormMessages,
+  SubmitButton,
+  FormPrivacy,
+} from "@/components/forms/useIntakeForm";
+import { hackerOptionalFields, logisticsFields } from "@/lib/intake/definitions";
 import { COUNTRIES } from "./countries";
 
-const UNIQUE_SCHOOLS = [...new Set(SCHOOLS)];
 const AGE_OPTIONS = Array.from({ length: 88 }, (_, i) => String(i + 13));
 const STUDY_LEVELS = [
   "Less than Secondary / High School",
@@ -22,105 +28,8 @@ const STUDY_LEVELS = [
   "Prefer not to answer",
 ];
 
-function formatPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "").slice(0, 10);
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
-}
-
-interface Errors {
-  firstName?: string;
-  lastName?: string;
-  age?: string;
-  phone?: string;
-  email?: string;
-  school?: string;
-  levelOfStudy?: string;
-  country?: string;
-  mlhCoc?: string;
-  mlhSharing?: string;
-}
-
-function SchoolCombobox({
-  value,
-  onChange,
-  error,
-}: {
-  value: string;
-  onChange: (val: string) => void;
-  error?: string;
-}) {
-  const [query, setQuery] = useState(value);
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const filtered = query.trim()
-    ? UNIQUE_SCHOOLS.filter((s) =>
-        s.toLowerCase().includes(query.toLowerCase())
-      ).slice(0, 100)
-    : UNIQUE_SCHOOLS.slice(0, 100);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        if (!value) setQuery("");
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [value]);
-
-  function select(school: string) {
-    onChange(school);
-    setQuery(school);
-    setOpen(false);
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <label className="mb-1 block font-semibold text-gray-900">
-        School<span className="text-red-600">*</span>
-      </label>
-      <input
-        type="text"
-        placeholder="Search for your school..."
-        value={query}
-        autoComplete="off"
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          onChange("");
-          setOpen(true);
-        }}
-        className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-      />
-      {open && filtered.length > 0 && (
-        <ul className="absolute left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
-          {filtered.map((s) => (
-            <li
-              key={s}
-              onMouseDown={() => select(s)}
-              className="cursor-pointer px-3 py-2 text-sm text-gray-900 hover:bg-[#EDF6FF]"
-            >
-              {s}
-            </li>
-          ))}
-          {query.trim() && filtered.length === 100 && (
-            <li className="px-3 py-2 text-xs text-gray-400">
-              Showing first 100 results — type more to narrow down
-            </li>
-          )}
-        </ul>
-      )}
-      {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
-    </div>
-  );
 }
 
 export default function InterestPage() {
@@ -137,18 +46,27 @@ export default function InterestPage() {
   const [mlhEmails, setMlhEmails] = useState(false);
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [errors, setErrors] = useState<Errors>({});
+  const [resume, setResume] = useState<File>();
+  const {
+    errors,
+    setErrors,
+    submit,
+    isSubmitting,
+    extras,
+    changeExtra,
+    touch,
+    notificationWarning,
+  } = useIntakeForm("hacker");
 
-  function handleNameChange(setter: (v: string) => void, field: keyof Errors) {
+  function handleNameChange(setter: (v: string) => void, field: string) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
-      const filtered = e.target.value.replace(/[^a-zA-Z\s]/g, "");
-      setter(filtered);
+      setter(e.target.value);
       if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
     };
   }
 
   function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setPhone(formatPhone(e.target.value));
+    setPhone(e.target.value);
     if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
   }
 
@@ -168,84 +86,33 @@ export default function InterestPage() {
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    const next: Errors = {};
-
-    if (!firstName.trim()) next.firstName = "First name is required";
-    if (!lastName.trim()) next.lastName = "Last name is required";
-    if (!age) next.age = "Please select your age";
-
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length === 0) {
-      next.phone = "Phone number is required";
-    } else if (digits.length !== 10) {
-      next.phone = "Phone number must be exactly 10 digits";
-    }
-
-    if (!email.trim()) {
-      next.email = "Email is required";
-    } else if (!isValidEmail(email)) {
-      next.email = "Please enter a valid email (e.g. name@domain.com)";
-    }
-
-    if (!school) next.school = "Please select your school";
-    if (!levelOfStudy) next.levelOfStudy = "Please select your level of study";
-    if (!country) next.country = "Please select your country of residence";
-    if (!mlhCoc) next.mlhCoc = "You must agree to the MLH Code of Conduct";
-    if (!mlhSharing) next.mlhSharing = "You must authorize MLH information sharing";
-
-    if (Object.keys(next).length > 0) {
-      setErrors(next);
-      return;
-    }
-
-    const { error: dbError } = await supabase.from("hacker_interest").insert({
-      first_name: firstName.trim(),
-      last_name: lastName.trim(),
-      age,
-      phone,
-      email: email.trim(),
-      school,
-      level_of_study: levelOfStudy,
-      other_level_of_study: otherLevelOfStudy || null,
-      country,
-      mlh_coc: mlhCoc,
-      mlh_sharing: mlhSharing,
-      mlh_emails: mlhEmails,
-    });
-
-    if (dbError) {
-      setErrors({ email: "Something went wrong, please try again." });
-      return;
-    }
-
-    setSubmitted(true);
-
-    fetch("/api/hacker-interest/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        age,
-        phone,
-        email: email.trim(),
-        school,
-        levelOfStudy,
-        otherLevelOfStudy: otherLevelOfStudy.trim() || null,
-        country,
-      }),
-    }).catch((err) => {
-      console.error("Failed to send hacker interest confirmation email", err);
-    });
+    if (
+      await submit(
+        {
+          ...extras,
+          firstName,
+          lastName,
+          age,
+          phone,
+          email,
+          school,
+          levelOfStudy,
+          otherLevelOfStudy,
+          country,
+          mlhCoc,
+          mlhSharing,
+          mlhEmails,
+        },
+        resume,
+      )
+    )
+      setSubmitted(true);
   }
 
   return (
     <div className="relative min-h-screen pt-24 pb-16 flex items-center justify-center px-4">
       {/* Decorative background blobs */}
-      <div
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        aria-hidden="true"
-      >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -top-20 -left-20 h-96 w-96 rounded-full bg-[#228CF6]/10 blur-3xl" />
         <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-[#19E363]/10 blur-3xl" />
       </div>
@@ -253,9 +120,7 @@ export default function InterestPage() {
       <div className="relative w-full max-w-lg">
         {/* Header */}
         <div className="mb-8 text-center">
-          <p className="font-mono text-sm uppercase tracking-widest text-[#228CF6] mb-2">
-          
-          </p>
+          <p className="font-mono text-sm uppercase tracking-widest text-[#228CF6] mb-2"></p>
           <h1 className="text-4xl sm:text-5xl font-bold text-[#151477] leading-tight">
             Hacker Interest{" "}
             <span className="relative inline-block after:absolute after:left-0 after:-bottom-1 after:h-1 after:w-full after:bg-[#19E363]">
@@ -263,7 +128,8 @@ export default function InterestPage() {
             </span>
           </h1>
           <p className="mt-4 text-[#151477]/70 text-base sm:text-lg">
-            We are glad to know that you&apos;re interested — please fill out the interest form below and we&apos;ll reach out when registration opens.
+            We are glad to know that you&apos;re interested — please fill out the interest form
+            below and we&apos;ll reach out when registration opens.
           </p>
         </div>
 
@@ -279,20 +145,27 @@ export default function InterestPage() {
                   strokeWidth={2.5}
                   viewBox="0 0 24 24"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M4.5 12.75l6 6 9-13.5"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
               </div>
               <h2 className="text-2xl font-bold text-[#151477]">You&apos;re on the list!</h2>
               <p className="text-[#151477]/70">
                 Thanks for your interest. We&apos;ll be in touch soon.
               </p>
+              {notificationWarning && (
+                <p role="status" className="text-sm text-gray-600">
+                  {notificationWarning}
+                </p>
+              )}
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
+            <form
+              onSubmit={handleSubmit}
+              onChange={touch}
+              className="flex flex-col gap-6"
+              noValidate
+            >
+              <FormMessages errors={errors} />
               <InputField
                 name="firstName"
                 label="First Name"
@@ -327,9 +200,13 @@ export default function InterestPage() {
                   }}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                 >
-                  <option value="" disabled>Select...</option>
+                  <option value="" disabled>
+                    Select...
+                  </option>
                   {AGE_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
                   ))}
                 </select>
                 {errors.age && <p className="mt-1 text-sm text-red-600">{errors.age}</p>}
@@ -339,8 +216,8 @@ export default function InterestPage() {
                 name="phone"
                 label="Phone Number"
                 type="tel"
-                placeholder="e.g. 123-456-7890"
-                inputMode="numeric"
+                placeholder="e.g. +1 513 555 0123"
+                inputMode="tel"
                 value={phone}
                 onChange={handlePhoneChange}
                 error={errors.phone}
@@ -359,7 +236,7 @@ export default function InterestPage() {
                 required
               />
 
-              <SchoolCombobox
+              <SchoolField
                 value={school}
                 onChange={(val) => {
                   setSchool(val);
@@ -379,16 +256,23 @@ export default function InterestPage() {
                   onChange={(e) => {
                     setLevelOfStudy(e.target.value);
                     if (e.target.value !== "Other") setOtherLevelOfStudy("");
-                    if (errors.levelOfStudy) setErrors((prev) => ({ ...prev, levelOfStudy: undefined }));
+                    if (errors.levelOfStudy)
+                      setErrors((prev) => ({ ...prev, levelOfStudy: undefined }));
                   }}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                 >
-                  <option value="" disabled>Select...</option>
+                  <option value="" disabled>
+                    Select...
+                  </option>
                   {STUDY_LEVELS.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
                   ))}
                 </select>
-                {errors.levelOfStudy && <p className="mt-1 text-sm text-red-600">{errors.levelOfStudy}</p>}
+                {errors.levelOfStudy && (
+                  <p className="mt-1 text-sm text-red-600">{errors.levelOfStudy}</p>
+                )}
               </div>
 
               {levelOfStudy === "Other" && (
@@ -398,6 +282,7 @@ export default function InterestPage() {
                   placeholder="Describe your level of study"
                   value={otherLevelOfStudy}
                   onChange={(e) => setOtherLevelOfStudy(e.target.value)}
+                  error={errors.otherLevelOfStudy}
                   required
                 />
               )}
@@ -416,9 +301,13 @@ export default function InterestPage() {
                   }}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
                 >
-                  <option value="" disabled>Select...</option>
+                  <option value="" disabled>
+                    Select...
+                  </option>
                   {COUNTRIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
                 </select>
                 {errors.country && <p className="mt-1 text-sm text-red-600">{errors.country}</p>}
@@ -427,7 +316,9 @@ export default function InterestPage() {
               {/* MLH Partnership Section */}
               <div className="rounded-lg border border-[#B7D9FF] bg-[#EDF6FF]/60 px-4 py-4 flex flex-col gap-4">
                 <p className="text-xs text-[#151477]/70 leading-relaxed">
-                  We are currently in the process of partnering with MLH. The following 3 checkboxes are for this partnership. If we do not end up partnering with MLH, your information will not be shared.
+                  We are currently in the process of partnering with MLH. The following 3 checkboxes
+                  are for this partnership. If we do not end up partnering with MLH, your
+                  information will not be shared.
                 </p>
 
                 <div className="flex flex-col gap-3">
@@ -436,6 +327,8 @@ export default function InterestPage() {
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        id="mlhCoc"
+                        name="mlhCoc"
                         checked={mlhCoc}
                         onChange={(e) => {
                           setMlhCoc(e.target.checked);
@@ -456,7 +349,9 @@ export default function InterestPage() {
                         .<span className="text-red-600 ml-0.5">*</span>
                       </span>
                     </label>
-                    {errors.mlhCoc && <p className="mt-1 ml-7 text-sm text-red-600">{errors.mlhCoc}</p>}
+                    {errors.mlhCoc && (
+                      <p className="mt-1 ml-7 text-sm text-red-600">{errors.mlhCoc}</p>
+                    )}
                   </div>
 
                   {/* Checkbox 2 - required */}
@@ -464,24 +359,29 @@ export default function InterestPage() {
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
+                        id="mlhSharing"
+                        name="mlhSharing"
                         checked={mlhSharing}
                         onChange={(e) => {
                           setMlhSharing(e.target.checked);
-                          if (errors.mlhSharing) setErrors((prev) => ({ ...prev, mlhSharing: undefined }));
+                          if (errors.mlhSharing)
+                            setErrors((prev) => ({ ...prev, mlhSharing: undefined }));
                         }}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
                       />
                       <span className="text-sm text-gray-900">
-                        I authorize you to share my application/registration information with Major League Hacking for event administration, ranking, and administration (including the creation of linked accounts on MLH and {" "}
+                        I authorize you to share my application/registration information with Major
+                        League Hacking for event administration, ranking, and administration
+                        (including the creation of linked accounts on MLH and{" "}
                         <a
-                          href="dev.to"
+                          href="https://dev.to"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[#228CF6] underline hover:text-[#151477]"
                         >
                           DEV
                         </a>
-                           ) in line with the{" "}
+                        ) in line with the{" "}
                         <a
                           href="https://github.com/MLH/mlh-policies/blob/main/privacy-policy.md"
                           target="_blank"
@@ -498,35 +398,96 @@ export default function InterestPage() {
                           className="text-[#228CF6] underline hover:text-[#151477]"
                         >
                           MLH Contest Terms and Conditions
-                        </a>
-                        {" "}and the MLH Privacy Policy.
+                        </a>{" "}
+                        and the MLH Privacy Policy.
                         <span className="text-red-600 ml-0.5">*</span>
                       </span>
                     </label>
-                    {errors.mlhSharing && <p className="mt-1 ml-7 text-sm text-red-600">{errors.mlhSharing}</p>}
+                    {errors.mlhSharing && (
+                      <p className="mt-1 ml-7 text-sm text-red-600">{errors.mlhSharing}</p>
+                    )}
                   </div>
 
                   {/* Checkbox 3 - optional */}
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
+                      id="mlhEmails"
+                      name="mlhEmails"
                       checked={mlhEmails}
                       onChange={(e) => setMlhEmails(e.target.checked)}
                       className="mt-0.5 h-4 w-4 shrink-0 accent-[#151477]"
                     />
                     <span className="text-sm text-gray-900">
-                      I authorize MLH + DEV to send me occasional emails about relevant events, career opportunities, and community announcements.
+                      I authorize MLH + DEV to send me occasional emails about relevant events,
+                      career opportunities, and community announcements.
                     </span>
                   </label>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="mt-2 w-full rounded-md border-2 border-[#19E363] bg-[#151477] px-6 py-3 font-semibold text-[#EDF6FF] transition-all duration-200 hover:bg-[#19E363] hover:text-[#151477] active:scale-[0.98]"
+              <details className="rounded-md border border-[#B7D9FF] p-4">
+                <summary className="cursor-pointer font-semibold text-gray-900">
+                  Optional profile and team questions
+                </summary>
+                <div className="mt-4 flex flex-col gap-5">
+                  <Fields
+                    fields={hackerOptionalFields}
+                    answers={extras}
+                    onChange={changeExtra}
+                    errors={errors}
+                  />
+                </div>
+              </details>
+              <details className="rounded-md border border-[#B7D9FF] p-4">
+                <summary className="cursor-pointer font-semibold text-gray-900">
+                  Food, shirts, and accessibility
+                </summary>
+                <div className="mt-4 flex flex-col gap-5">
+                  <Fields
+                    fields={logisticsFields}
+                    answers={extras}
+                    onChange={changeExtra}
+                    errors={errors}
+                  />
+                </div>
+              </details>
+              <section
+                className="rounded-md border border-[#B7D9FF] p-4 text-gray-900"
+                aria-labelledby="resume-heading"
               >
-                Submit
-              </button>
+                <h2 id="resume-heading" className="font-semibold">
+                  Optional resume
+                </h2>
+                <p id="resume-help" className="mt-2 text-sm text-gray-600">
+                  Upload a PDF up to 4 MB. Your resume stays private. The resume-sharing choice
+                  above tells organizers whether you want it shared with sponsors.
+                </p>
+                <label htmlFor="resume" className="mt-4 block font-medium">
+                  Choose a PDF resume
+                </label>
+                <input
+                  id="resume"
+                  name="resume"
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  aria-describedby={errors.resume ? "resume-help resume-error" : "resume-help"}
+                  aria-invalid={Boolean(errors.resume)}
+                  className="mt-2 block min-h-11 w-full rounded-md border p-2 text-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#228CF6]"
+                  onChange={(event) => {
+                    setResume(event.target.files?.[0]);
+                    setErrors((prev) => ({ ...prev, resume: undefined }));
+                    touch();
+                  }}
+                />
+                {errors.resume && (
+                  <p id="resume-error" className="mt-2 text-sm text-red-700">
+                    {errors.resume}
+                  </p>
+                )}
+              </section>
+              <FormPrivacy />
+              <SubmitButton pending={isSubmitting} />
             </form>
           )}
         </div>
